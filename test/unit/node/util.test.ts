@@ -1,9 +1,11 @@
 import * as cp from "child_process"
+import { logger } from "@coder/logger"
 import { promises as fs } from "fs"
 import * as path from "path"
 import { generateUuid } from "../../../src/common/util"
 import { tmpdir } from "../../../src/node/constants"
 import * as util from "../../../src/node/util"
+import { mockLogger } from "../../utils/helpers"
 
 describe("getEnvPaths", () => {
   describe("on darwin", () => {
@@ -99,10 +101,30 @@ describe("getEnvPaths", () => {
 })
 
 describe("hash", () => {
+  beforeAll(() => {
+    mockLogger()
+  })
+
+  afterEach(() => {
+    jest.clearAllMocks()
+  })
+
   it("should return a hash of the string passed in", async () => {
     const plainTextPassword = "mySecretPassword123"
     const hashed = await util.hash(plainTextPassword)
     expect(hashed).not.toBe(plainTextPassword)
+  })
+  it("should log an error and return an empty string on error", async () => {
+    // Although we don't expect to pass the wrong type to our `hash`
+    // function, we do want to make sure our function handles errors correctly.
+    // Therefore, we mock a scenario where the password is `undefined`
+    // which gets us into the catch block and checks that we handle errors by
+    // logging it and returning an empty string (as opposed to throwing an Error)
+    // and crashing our program for a silly password error.
+    // @ts-expect-error See description above
+    const hashed = await util.hash(undefined)
+    expect(hashed).toBe("")
+    expect(logger.error).toHaveBeenCalled()
   })
 })
 
