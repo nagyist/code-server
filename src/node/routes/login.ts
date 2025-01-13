@@ -1,13 +1,12 @@
 import { Router, Request } from "express"
 import { promises as fs } from "fs"
 import { RateLimiter as Limiter } from "limiter"
-import * as os from "os"
 import * as path from "path"
 import { CookieKeys } from "../../common/http"
 import { rootPath } from "../constants"
 import { authenticated, getCookieOptions, redirect, replaceTemplates } from "../http"
-import { getPasswordMethod, handlePasswordValidation, humanPath, sanitizeString, escapeHtml } from "../util"
 import i18n from "../i18n"
+import { getPasswordMethod, handlePasswordValidation, sanitizeString, escapeHtml } from "../util"
 
 // RateLimiter wraps around the limiter library for logins.
 // It allows 2 logins every minute plus 12 logins every hour.
@@ -33,7 +32,7 @@ const getRoot = async (req: Request, error?: Error): Promise<string> => {
   i18n.changeLanguage(locale)
   const appName = req.args["app-name"] || "code-server"
   const welcomeText = req.args["welcome-text"] || (i18n.t("WELCOME", { app: appName }) as string)
-  let passwordMsg = i18n.t("LOGIN_PASSWORD", { configFile: humanPath(os.homedir(), req.args.config) })
+  let passwordMsg = i18n.t("LOGIN_PASSWORD", { configFile: req.args.config })
   if (req.args.usingEnvPassword) {
     passwordMsg = i18n.t("LOGIN_USING_ENV_PASSWORD")
   } else if (req.args.usingEnvHashedPassword) {
@@ -69,8 +68,8 @@ router.get("/", async (req, res) => {
   res.send(await getRoot(req))
 })
 
-router.post<{}, string, { password: string; base?: string }, { to?: string }>("/", async (req, res) => {
-  const password = sanitizeString(req.body.password)
+router.post<{}, string, { password?: string; base?: string } | undefined, { to?: string }>("/", async (req, res) => {
+  const password = sanitizeString(req.body?.password)
   const hashedPasswordFromArgs = req.args["hashed-password"]
 
   try {

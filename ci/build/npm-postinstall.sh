@@ -51,11 +51,19 @@ symlink_bin_script() {
   cd "$oldpwd"
 }
 
-OS="$(os)"
+command_exists() {
+  if [ ! "$1" ]; then return 1; fi
+  command -v "$@" > /dev/null
+}
 
-# This is due to an upstream issue with RHEL7/CentOS 7 comptability with node-argon2
-# See: https://github.com/cdr/code-server/pull/3422#pullrequestreview-677765057
-export npm_config_build_from_source=true
+is_root() {
+  if command_exists id && [ "$(id -u)" = 0 ]; then
+    return 0
+  fi
+  return 1
+}
+
+OS="$(os)"
 
 main() {
   # Grabs the major version of node from $npm_config_user_agent which looks like
@@ -68,8 +76,8 @@ main() {
     echo "USE AT YOUR OWN RISK!"
   fi
 
-  if [ "$major_node_version" -ne "${FORCE_NODE_VERSION:-16}" ]; then
-    echo "ERROR: code-server currently requires node v16."
+  if [ "$major_node_version" -ne "${FORCE_NODE_VERSION:-20}" ]; then
+    echo "ERROR: code-server currently requires node v20."
     if [ -n "$FORCE_NODE_VERSION" ]; then
       echo "However, you have overrided the version check to use v$FORCE_NODE_VERSION."
     fi
@@ -79,17 +87,20 @@ main() {
     exit 1
   fi
 
-  case "${npm_config_user_agent-}" in npm*)
-    # We are running under npm.
-    if [ "${npm_config_unsafe_perm-}" != "true" ]; then
-      echo "Please pass --unsafe-perm to npm to install code-server"
-      echo "Otherwise the postinstall script does not have permissions to run"
-      echo "See https://docs.npmjs.com/misc/config#unsafe-perm"
-      echo "See https://stackoverflow.com/questions/49084929/npm-sudo-global-installation-unsafe-perm"
-      exit 1
-    fi
-    ;;
-  esac
+  # Under npm, if we are running as root, we need --unsafe-perm otherwise
+  # post-install scripts will not have sufficient permissions to do their thing.
+  if is_root; then
+    case "${npm_config_user_agent-}" in npm*)
+      if [ "${npm_config_unsafe_perm-}" != "true" ]; then
+        echo "Please pass --unsafe-perm to npm to install code-server"
+        echo "Otherwise post-install scripts will not have permissions to run"
+        echo "See https://docs.npmjs.com/misc/config#unsafe-perm"
+        echo "See https://stackoverflow.com/questions/49084929/npm-sudo-global-installation-unsafe-perm"
+        exit 1
+      fi
+      ;;
+    esac
+  fi
 
   if ! vscode_install; then
     echo "You may not have the required dependencies to build the native modules."
@@ -106,36 +117,44 @@ main() {
 
 install_with_yarn_or_npm() {
   echo "User agent: ${npm_config_user_agent-none}"
-  # NOTE@edvincent: We want to keep using the package manager that the end-user was using to install the package.
-  # This also ensures that when *we* run `yarn` in the development process, the yarn.lock file is used.
+  # For development we enforce npm, but for installing the package as an
+  # end-user we want to keep using whatever package manager is in use.
   case "${npm_config_user_agent-}" in
     npm*)
-      # HACK: NPM's use of semver doesn't like resolving some peerDependencies that vscode (upstream) brings in the form of pre-releases.
-      # The legacy behavior doesn't complain about pre-releases being used, falling back to that for now.
-      # See https://github.com//pull/5071
-      npm install --unsafe-perm --legacy-peer-deps --omit=dev
+      if ! npm install --unsafe-perm --omit=dev; then
+        return 1
+      fi
       ;;
     yarn*)
-      yarn --production --frozen-lockfile --no-default-rc
+      if ! yarn --production --frozen-lockfile --no-default-rc; then
+        return 1
+      fi
       ;;
     *)
       echo "Could not determine which package manager is being used to install code-server"
       exit 1
       ;;
   esac
+  return 0
 }
 
 vscode_install() {
   echo 'Installing Code dependencies...'
   cd lib/vscode
-  install_with_yarn_or_npm
+  if ! install_with_yarn_or_npm; then
+    return 1
+  fi
 
   symlink_asar
   symlink_bin_script remote-cli code code-server
   symlink_bin_script helpers browser browser .sh
 
   cd extensions
-  install_with_yarn_or_npm
+  if ! install_with_yarn_or_npm; then
+    return 1
+  fi
+
+  return 0
 }
 
 main "$@"
